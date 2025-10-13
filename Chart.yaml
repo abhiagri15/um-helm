@@ -1,0 +1,13 @@
+apiVersion: v2
+name: universal-messaging
+description: Universal Messaging cluster for webMethods Integration Server
+type: application
+version: 1.1.0
+appVersion: "11.1.0.6"
+keywords:
+  - universal-messaging
+  - webmethods
+  - messaging
+  - cluster
+maintainers:
+  - name: webMethods Team

@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: wm-um
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: wm-um
+    component: messaging
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - name: nsp
+    port: {{ .Values.service.ports.nsp }}
+    targetPort: nsp
+    protocol: TCP
+  - name: jmx
+    port: {{ .Values.service.ports.jmx }}
+    targetPort: jmx
+    protocol: TCP
+  selector:
+    app: wm-um
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wm-um-headless
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: wm-um
+    component: messaging
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+  - name: nsp
+    port: {{ .Values.service.ports.nsp }}
+    targetPort: nsp
+    protocol: TCP
+  - name: jmx
+    port: {{ .Values.service.ports.jmx }}
+    targetPort: jmx
+    protocol: TCP
+  selector:
+    app: wm-um

@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: wm-um
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: wm-um
+    component: messaging
+spec:
+  serviceName: wm-um-headless
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: wm-um
+  template:
+    metadata:
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+      labels:
+        {{- toYaml .Values.podLabels | nindent 8 }}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- end }}
+      initContainers:
+      - name: fix-permissions
+        image: busybox:latest
+        securityContext:
+          runAsUser: 0
+        command: ['sh', '-c', 'chown -R 1000:1000 /opt/softwareag/UniversalMessaging/server/umserver/data && chmod -R 755 /opt/softwareag/UniversalMessaging/server/umserver/data']
+        volumeMounts:
+        - name: um-data
+          mountPath: /opt/softwareag/UniversalMessaging/server/umserver/data
+      containers:
+      - name: universalmessaging
+        image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          runAsUser: 1000
+          runAsNonRoot: true
+        ports:
+        - name: nsp
+          containerPort: {{ .Values.service.ports.nsp }}
+          protocol: TCP
+        - name: jmx
+          containerPort: {{ .Values.service.ports.jmx }}
+          protocol: TCP
+        env:
+        {{- range .Values.env }}
+        - name: {{ .name }}
+          value: {{ .value | quote }}
+        {{- end }}
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - name: um-data
+          mountPath: /opt/softwareag/UniversalMessaging/server/umserver/data
+        {{- if .Values.healthProbes.startup.enabled }}
+        startupProbe:
+          httpGet:
+            path: /health/
+            port: {{ .Values.service.ports.nsp }}
+          initialDelaySeconds: {{ .Values.healthProbes.startup.initialDelaySeconds }}
+          periodSeconds: {{ .Values.healthProbes.startup.periodSeconds }}
+          timeoutSeconds: {{ .Values.healthProbes.startup.timeoutSeconds }}
+          failureThreshold: {{ .Values.healthProbes.startup.failureThreshold }}
+        {{- end }}
+        {{- if .Values.healthProbes.liveness.enabled }}
+        livenessProbe:
+          httpGet:
+            path: /health/
+            port: {{ .Values.service.ports.nsp }}
+          initialDelaySeconds: {{ .Values.healthProbes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.healthProbes.liveness.periodSeconds }}
+          timeoutSeconds: {{ .Values.healthProbes.liveness.timeoutSeconds }}
+          failureThreshold: {{ .Values.healthProbes.liveness.failureThreshold }}
+        {{- end }}
+        {{- if .Values.healthProbes.readiness.enabled }}
+        readinessProbe:
+          httpGet:
+            path: /health/
+            port: {{ .Values.service.ports.nsp }}
+          initialDelaySeconds: {{ .Values.healthProbes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.healthProbes.readiness.periodSeconds }}
+          timeoutSeconds: {{ .Values.healthProbes.readiness.timeoutSeconds }}
+          failureThreshold: {{ .Values.healthProbes.readiness.failureThreshold }}
+        {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: um-data
+    spec:
+      accessModes:
+        - {{ .Values.persistence.accessMode }}
+      {{- if .Values.persistence.storageClass }}
+      storageClassName: {{ .Values.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.persistence.size }}
+  {{- end }}

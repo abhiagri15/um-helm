@@ -1,0 +1,4 @@
+# Helm 
+*.tgz 
+*.lock 
+secrets.yaml 
