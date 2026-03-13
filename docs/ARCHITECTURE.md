@@ -70,22 +70,22 @@ This document describes the reference architecture for deploying Software AG Uni
 │   (Single Cluster Mode)         │        (Multi-Cluster Mode)                   │
 │                                 │                                               │
 │  ┌─────────────────────────┐    │    ┌───────────┐ ┌───────────┐ ┌───────────┐ │
-│  │    um-biz          │    │    │um-logs-a  │ │um-logs-b  │ │um-logs-c  │ │
-│  │ ┌─────┐┌─────┐┌─────┐   │    │    │ (MASTER)  │ │ (MASTER)  │ │ (MASTER)  │ │
-│  │ │  0  ││  1  ││  2  │   │    │    └─────┬─────┘ └─────┬─────┘ └─────┬─────┘ │
-│  │ │MASTR││SLAVE││SLAVE│   │    │          │             │             │       │
-│  │ └──┬──┘└──┬──┘└──┬──┘   │    │          └─────────────┼─────────────┘       │
-│  │    └──────┼──────┘      │    │                        │                     │
-│  │           │             │    │             ┌──────────▼──────────┐          │
-│  │    ┌──────▼──────┐      │    │             │  um-logs-combined   │          │
-│  │    │ um-biz │      │    │             │  (Load Balancer)    │          │
-│  │    │  (Service)  │      │    │             └─────────────────────┘          │
-│  │    └─────────────┘      │    │                                               │
-│  │                         │    │                                               │
-│  │  - 1 Master + N Slaves  │    │    - Each cluster is independent Master      │
-│  │  - Auto-failover        │    │    - 3x write throughput                     │
-│  │  - Data replication     │    │    - Publishers use combined service         │
-│  │  - Single connection    │    │    - Consumers connect to each cluster       │
+│  │       um-biz            │    │    │um-logs-a  │ │um-logs-b  │ │um-logs-c  │ │
+│  │ ┌─────┐┌─────┐┌─────┐  │    │    │ (MASTER)  │ │ (MASTER)  │ │ (MASTER)  │ │
+│  │ │  0  ││  1  ││  2  │  │    │    └─────┬─────┘ └─────┬─────┘ └─────┬─────┘ │
+│  │ │MASTR││SLAVE││SLAVE│  │    │          │             │             │       │
+│  │ └──┬──┘└──┬──┘└──┬──┘  │    │          └─────────────┼─────────────┘       │
+│  │    └──────┼──────┘     │    │                        │                     │
+│  │           │            │    │             ┌──────────▼──────────┐          │
+│  │    ┌──────▼──────┐     │    │             │  um-logs-combined   │          │
+│  │    │   um-biz    │     │    │             │  (Load Balancer)    │          │
+│  │    │  (Service)  │     │    │             └─────────────────────┘          │
+│  │    └─────────────┘     │    │                                               │
+│  │                        │    │                                               │
+│  │  - 1 Master + N Slaves │    │    - Each cluster is independent Master      │
+│  │  - Auto-failover       │    │    - 3x write throughput                     │
+│  │  - Data replication    │    │    - Publishers use combined service         │
+│  │  - Single connection   │    │    - Consumers connect to each cluster       │
 │  └─────────────────────────┘    └───────────────────────────────────────────────┘
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -113,7 +113,7 @@ This document describes the reference architecture for deploying Software AG Uni
 │              Active-Passive Cluster (3 Replicas)                │
 │                                                                 │
 │   ┌─────────────────┐                                          │
-│   │   um-biz-0 │  MASTER                                  │
+│   │    um-biz-0     │  MASTER                                  │
 │   │    (Primary)    │  - Accepts all writes                    │
 │   │     :9000       │  - Replicates to slaves                  │
 │   └────────┬────────┘                                          │
@@ -124,7 +124,7 @@ This document describes the reference architecture for deploying Software AG Uni
 │   │                 │                 │                        │
 │   ▼                 ▼                 │                        │
 │ ┌─────────────┐ ┌─────────────┐       │                        │
-│ │um-biz-1│ │um-biz-2│       │                        │
+│ │  um-biz-1   │ │  um-biz-2   │       │                        │
 │ │   (SLAVE)   │ │   (SLAVE)   │       │                        │
 │ │   :9000     │ │   :9000     │       │                        │
 │ └──────┬──────┘ └──────┬──────┘       │                        │
@@ -132,11 +132,11 @@ This document describes the reference architecture for deploying Software AG Uni
 │        └───────────────┴──────────────┘                        │
 │                        │                                        │
 │               ┌────────▼────────┐                              │
-│               │   um-biz   │◄──── MSR Pods                │
+│               │    um-biz        │◄──── MSR Pods                │
 │               │   (ClusterIP)   │                              │
 │               └─────────────────┘                              │
 │                                                                 │
-│   Connection URL: nsp://um-biz:9000                       │
+│   Connection URL: nsp://um-biz:9000                            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -364,18 +364,18 @@ affinity:
 │   ACTIVE-PASSIVE:                    ACTIVE-ACTIVE:                         │
 │                                                                              │
 │   ┌─────────────────────┐            ┌─────────────────────┐               │
-│   │    um-biz      │            │   um-logs-combined  │               │
+│   │      um-biz         │            │   um-logs-combined  │               │
 │   │    (ClusterIP)      │            │    (ClusterIP)      │               │
 │   │                     │            │                     │               │
 │   │  Selector:          │            │  Selector:          │               │
-│   │   app: um-biz  │            │   component: messaging              │
+│   │   app: um-biz       │            │   component: messaging              │
 │   │                     │            │   tier: middleware  │               │
 │   │  Routes to any      │            │   data-type: logs   │               │
 │   │  of 3 replicas      │            │                     │               │
 │   └─────────────────────┘            │  Routes to all 3    │               │
 │                                      │  cluster pods       │               │
 │   ┌─────────────────────┐            └─────────────────────┘               │
-│   │  um-biz-headless│                                                  │
+│   │  um-biz-headless   │                                                  │
 │   │    (Headless)       │            ┌───────────┬───────────┬───────────┐ │
 │   │                     │            │um-logs-a  │um-logs-b  │um-logs-c  │ │
 │   │  For StatefulSet    │            │(ClusterIP)│(ClusterIP)│(ClusterIP)│ │
@@ -438,10 +438,10 @@ podLabels:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                        Storage Architecture                                  │
 │                                                                              │
-│   ACTIVE-PASSIVE (um-biz):      ACTIVE-ACTIVE (um-logs-*):            │
+│   ACTIVE-PASSIVE (um-biz):        ACTIVE-ACTIVE (um-logs-*):            │
 │                                                                              │
 │   ┌─────────────┐ ┌─────────────┐    ┌─────────────┐                       │
-│   │um-biz-0│ │um-biz-1│    │ um-logs-a-0 │                       │
+│   │  um-biz-0   │ │  um-biz-1   │    │ um-logs-a-0 │                       │
 │   └──────┬──────┘ └──────┬──────┘    └──────┬──────┘                       │
 │          │               │                   │                              │
 │   ┌──────▼──────┐ ┌──────▼──────┐    ┌──────▼──────┐                       │

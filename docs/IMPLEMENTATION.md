@@ -139,7 +139,7 @@ Single cluster with 3 replicas. Use for transactional data requiring consistency
 │  └──────┘ └──────┘ └──────┘    │
 │                                 │
 │  Connection URL (short DNS):    │
-│  nsp://um-biz:9000         │
+│  nsp://um-biz:9000              │
 └─────────────────────────────────┘
 ```
 
