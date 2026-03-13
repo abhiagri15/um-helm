@@ -1,0 +1,34 @@
+{{- if and .Values.um.interRealm .Values.um.interRealm.enabled .Values.um.interRealm.combinedService }}
+{{- if .Values.um.interRealm.combinedService.enabled }}
+# Combined Service for Active-Active UM Clusters
+# This service load balances across all UM clusters, allowing MSR to connect via a single URL
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.um.interRealm.combinedService.name | default "um-combined" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.um.interRealm.combinedService.name | default "um-combined" }}
+    component: messaging
+    type: load-balancer
+spec:
+  type: {{ .Values.um.interRealm.combinedService.type | default "ClusterIP" }}
+  ports:
+  - name: nsp
+    port: {{ .Values.service.ports.nsp }}
+    targetPort: nsp
+    protocol: TCP
+  - name: jmx
+    port: {{ .Values.service.ports.jmx }}
+    targetPort: jmx
+    protocol: TCP
+  # Select pods from ALL UM clusters using common labels
+  # Uses data-type label if specified, otherwise uses component/tier
+  selector:
+    component: messaging
+    tier: middleware
+    {{- if .Values.um.interRealm.combinedService.dataType }}
+    data-type: {{ .Values.um.interRealm.combinedService.dataType | quote }}
+    {{- end }}
+{{- end }}
+{{- end }}

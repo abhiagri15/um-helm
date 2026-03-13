@@ -1,0 +1,13 @@
+{{- if or .Values.um.clustering.enabled (and .Values.um.interRealm .Values.um.interRealm.enabled) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "um.fullname" . }}-jndi-registrar
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "um.fullname" . }}
+    component: jndi-registrar
+data:
+  JndiRegistrar.java: |
+{{ .Files.Get "files/JndiRegistrar.java" | indent 4 }}
+{{- end }}

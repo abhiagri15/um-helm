@@ -1,24 +1,30 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: wm-um
-  namespace: {{ .Values.global.namespace }}
+  name: {{ include "um.fullname" . }}
+  namespace: {{ .Release.Namespace }}
   labels:
-    app: wm-um
+    app: {{ include "um.fullname" . }}
     component: messaging
 spec:
-  serviceName: wm-um-headless
+  serviceName: {{ include "um.fullname" . }}-headless
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: wm-um
+      app: {{ include "um.fullname" . }}
   template:
     metadata:
       annotations:
         {{- toYaml .Values.podAnnotations | nindent 8 }}
       labels:
-        {{- toYaml .Values.podLabels | nindent 8 }}
+        app: {{ include "um.fullname" . }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
+      # Set hostname to FQDN for proper cluster communication
+      subdomain: {{ include "um.fullname" . }}-headless
+      setHostnameAsFQDN: true
       securityContext:
         fsGroup: 1000
       {{- if .Values.affinity }}
@@ -50,18 +56,40 @@ spec:
           protocol: TCP
         env:
         {{- range .Values.env }}
+        {{- if ne .name "REALM_NAME" }}
         - name: {{ .name }}
           value: {{ .value | quote }}
+        {{- end }}
         {{- end }}
         - name: POD_NAME
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
+        # Dynamic realm name based on pod ordinal for clustering
+        - name: REALM_NAME
+          value: "$(POD_NAME)"
+        # Cluster configuration
+        - name: UM_CLUSTER_NAME
+          value: {{ .Values.um.clusterName | default "umCluster" | quote }}
+        - name: UM_REPLICA_COUNT
+          value: {{ .Values.replicaCount | quote }}
+        - name: UM_HEADLESS_SERVICE
+          value: "{{ include "um.fullname" . }}-headless"
+        - name: UM_NAMESPACE
+          value: {{ .Release.Namespace | quote }}
+        - name: UM_PORT
+          value: {{ .Values.service.ports.nsp | quote }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         volumeMounts:
         - name: um-data
           mountPath: /opt/softwareag/UniversalMessaging/server/umserver/data
+        {{- if .Values.license.enabled }}
+        - name: um-license
+          mountPath: /opt/softwareag/UniversalMessaging/server/default/bin/licence.xml
+          subPath: licence.xml
+          readOnly: true
+        {{- end }}
         {{- if .Values.healthProbes.startup.enabled }}
         startupProbe:
           httpGet:
@@ -92,6 +120,15 @@ spec:
           timeoutSeconds: {{ .Values.healthProbes.readiness.timeoutSeconds }}
           failureThreshold: {{ .Values.healthProbes.readiness.failureThreshold }}
         {{- end }}
+      {{- if .Values.license.enabled }}
+      volumes:
+      - name: um-license
+        configMap:
+          name: {{ include "um.fullname" . }}-license
+          items:
+          - key: licence.xml
+            path: licence.xml
+      {{- end }}
   {{- if .Values.persistence.enabled }}
   volumeClaimTemplates:
   - metadata:

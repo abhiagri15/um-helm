@@ -1,0 +1,186 @@
+# UM Business Data Cluster - Single Cluster with Multiple Replicas
+# Use case: Business data with strong consistency and auto-replication
+# Connection URL: nsp://um-biz:9000
+
+# ============================================================================
+# License Configuration (files/license/licence.xml)
+# ============================================================================
+# Set enabled: true ONLY after placing your real UM licence.xml.
+# Mounting the placeholder file will cause startup errors.
+#
+# Steps to enable:
+#   1. Replace files/license/licence.xml with your actual UM license
+#   2. Set license.enabled: true below
+#   3. Redeploy: helm upgrade um-biz ./um-helm -f values-business.yaml
+# ============================================================================
+license:
+  enabled: false
+
+# Cluster label for multi-cluster monitoring within same namespace
+# Used by Prometheus ServiceMonitors and Grafana dashboards to differentiate clusters
+clusterLabel: "business"
+
+# 3 replicas for HA (1 Master + 2 Slaves)
+replicaCount: 3
+
+# Release name prefix
+nameOverride: "um-biz"
+fullnameOverride: "um-biz"
+
+# UM image configuration
+image:
+  registry: abiwebmethods.azurecr.io
+  repository: webmethods/universalmessaging-server
+  tag: "11.1.2"
+  pullPolicy: IfNotPresent
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    nsp: 9000
+    jmx: 9200
+
+# Resource allocation
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+# Persistent storage
+persistence:
+  enabled: true
+  storageClass: "default"
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+# Universal Messaging configuration
+um:
+  realmName: "um-biz"
+  clusterName: "um-biz-cluster"
+  clustering:
+    enabled: true  # Enable Master-Slave clustering
+    mode: "active-passive"  # Traditional cluster with auto-failover
+  # =====================
+  # QUEUE CONFIGURATION
+  # =====================
+  queues:
+    enabled: true
+    names: "KPILog_Q,EventLog_Q,smudEmail_Q,ErrorRouting_Q"
+    type: "P"        # P=Persistent, R=Reliable, M=Mixed, S=Simple
+    ttl: 0           # Time-to-live in ms (0=unlimited)
+    capacity: 0      # Max events (0=unlimited)
+
+  # =====================
+  # CHANNEL (TOPIC) CONFIGURATION
+  # =====================
+  channels:
+    enabled: true
+    names: "smud/logging/Entry_T,smud/logging/Event_T,smud/logging/Session_T,smud/logging/Exception_T"
+    type: "P"        # P=Persistent, R=Reliable, M=Mixed, S=Simple
+    ttl: 0           # Time-to-live in ms (0=unlimited)
+    capacity: 0      # Max events (0=unlimited)
+
+  # =====================
+  # DURABLE SUBSCRIBER CONFIGURATION
+  # =====================
+  # Format: "channelName:durableName" (comma-separated for multiple)
+  durables:
+    enabled: false
+    configs: ""
+
+  # =====================
+  # JNDI CONNECTION FACTORY CONFIGURATION
+  # =====================
+  # Format: "factoryName:factoryType" (comma-separated for multiple)
+  # Types: default (ConnectionFactory), queue (QueueConnectionFactory),
+  #        topic (TopicConnectionFactory), xa (XAConnectionFactory)
+  connectionFactories:
+    enabled: true
+    configs: "SmPubConnectionFactory:default,smLoggingDurableConnectionFactory:default"
+
+  # =====================
+  # JNDI QUEUE REGISTRATION
+  # =====================
+  # Registers native UM queues in the JNDI namespace so JMS clients can look them up
+  # These queues must already exist (created by the queues section above)
+  # Format: comma-separated queue names
+  jndiQueues:
+    enabled: true
+    names: "KPILog_Q,EventLog_Q,smudEmail_Q,ErrorRouting_Q"
+
+  # =====================
+  # JNDI TOPIC REGISTRATION
+  # =====================
+  # Registers native UM channels as topics in the JNDI namespace
+  # These channels must already exist (created by the channels section above)
+  # Format: comma-separated channel/topic names
+  jndiTopics:
+    enabled: true
+    names: "smud/logging/Entry_T,smud/logging/Event_T,smud/logging/Session_T,smud/logging/Exception_T"
+
+# Pod Disruption Budget - keep at least 2 nodes available
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Health Probes
+healthProbes:
+  startup:
+    enabled: true
+    initialDelaySeconds: 120
+    periodSeconds: 15
+    timeoutSeconds: 30
+    failureThreshold: 20
+  liveness:
+    enabled: true
+    initialDelaySeconds: 180
+    periodSeconds: 30
+    timeoutSeconds: 30
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 120
+    periodSeconds: 15
+    timeoutSeconds: 30
+    failureThreshold: 3
+
+# Pod annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9200"
+
+# Pod labels
+podLabels:
+  component: messaging
+  tier: middleware
+  data-type: "business"
+
+# High availability with pod anti-affinity
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app: um-biz
+
+# Environment variables
+env:
+  - name: REALM_NAME
+    value: "um-biz"
+  - name: INIT_JAVA_MEM_SIZE
+    value: "512"
+  - name: MAX_JAVA_MEM_SIZE
+    value: "1536"
+  - name: MAX_DIRECT_MEM_SIZE
+    value: "1G"
+  - name: BASIC_AUTH_ENABLE
+    value: "Y"
+  - name: LOG_FRAMEWORK
+    value: "log4j2"

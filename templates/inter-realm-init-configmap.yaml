@@ -1,0 +1,426 @@
+{{- if and .Values.um.interRealm .Values.um.interRealm.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "um.fullname" . }}-inter-realm-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "um.fullname" . }}
+    component: inter-realm-init
+data:
+  init-inter-realm.sh: |
+    #!/bin/sh
+    set -e
+
+    LOCAL_REALM="${UM_LOCAL_REALM:-um-local}"
+    LOCAL_HOST="${UM_LOCAL_HOST:-localhost}"
+    LOCAL_PORT="${UM_LOCAL_PORT:-9000}"
+    NAMESPACE="${UM_NAMESPACE:-webmethods}"
+    REMOTE_REALMS="${UM_REMOTE_REALMS:-}"
+    CLUSTER_ID="${UM_CLUSTER_ID:-a}"
+
+    LOCAL_URL="nsp://${LOCAL_HOST}:${LOCAL_PORT}"
+
+    echo "=============================================="
+    echo "=== UM Initialization (Active-Active) ==="
+    echo "=============================================="
+    echo "Local Realm: ${LOCAL_REALM}"
+    echo "Local URL: ${LOCAL_URL}"
+    echo "Cluster ID: ${CLUSTER_ID}"
+    echo ""
+
+    # Wait for local realm to be ready
+    echo "Waiting for local realm to be ready..."
+    RETRIES=120
+    while [ $RETRIES -gt 0 ]; do
+      if runUMTool.sh GetServerTime -rname="${LOCAL_URL}" 2>/dev/null; then
+        echo "Local realm is ready!"
+        break
+      fi
+      echo "Waiting for local realm... (${RETRIES} retries left)"
+      sleep 5
+      RETRIES=$((RETRIES - 1))
+    done
+
+    if [ $RETRIES -eq 0 ]; then
+      echo "ERROR: Local realm is not ready after timeout"
+      exit 1
+    fi
+
+    sleep 10  # Extra wait for stability
+
+    #############################################
+    # ASSET CREATION SECTION
+    #############################################
+
+    # =====================
+    # CREATE QUEUES
+    # =====================
+    CREATE_QUEUES="${UM_CREATE_QUEUES:-false}"
+    QUEUE_NAMES="${UM_QUEUE_NAMES:-}"
+    QUEUE_TYPE="${UM_QUEUE_TYPE:-P}"
+    QUEUE_TTL="${UM_QUEUE_TTL:-0}"
+    QUEUE_CAPACITY="${UM_QUEUE_CAPACITY:-0}"
+
+    if [ "${CREATE_QUEUES}" = "true" ] && [ -n "${QUEUE_NAMES}" ]; then
+      echo ""
+      echo "=== Creating Queues ==="
+      echo "Type: ${QUEUE_TYPE} (P=Persistent, R=Reliable, M=Mixed, S=Simple)"
+      echo "TTL: ${QUEUE_TTL}ms (0=unlimited)"
+      echo "Capacity: ${QUEUE_CAPACITY} (0=unlimited)"
+      echo ""
+
+      echo "${QUEUE_NAMES}" | tr ',' '\n' | while read QUEUE_NAME; do
+        QUEUE_NAME=$(echo "${QUEUE_NAME}" | tr -d ' ')
+        if [ -n "${QUEUE_NAME}" ]; then
+          echo "Creating queue: ${QUEUE_NAME}"
+          EXISTING=$(runUMTool.sh ListChannels -rname="${LOCAL_URL}" 2>&1 || true)
+          if echo "${EXISTING}" | grep -q "^${QUEUE_NAME}$"; then
+            echo "  -> Queue ${QUEUE_NAME} already exists, skipping..."
+          else
+            runUMTool.sh CreateQueue \
+              -rname="${LOCAL_URL}" \
+              -queuename="${QUEUE_NAME}" \
+              -ttl="${QUEUE_TTL}" \
+              -type="${QUEUE_TYPE}" \
+              -maxevents="${QUEUE_CAPACITY}" 2>&1 && echo "  -> Queue ${QUEUE_NAME} created successfully" || echo "  -> Failed to create queue ${QUEUE_NAME}"
+          fi
+        fi
+      done
+      echo "=== Queues Created ==="
+    fi
+
+    # =====================
+    # CREATE CHANNELS (TOPICS)
+    # =====================
+    CREATE_CHANNELS="${UM_CREATE_CHANNELS:-false}"
+    CHANNEL_NAMES="${UM_CHANNEL_NAMES:-}"
+    CHANNEL_TYPE="${UM_CHANNEL_TYPE:-P}"
+    CHANNEL_TTL="${UM_CHANNEL_TTL:-0}"
+    CHANNEL_CAPACITY="${UM_CHANNEL_CAPACITY:-0}"
+
+    if [ "${CREATE_CHANNELS}" = "true" ] && [ -n "${CHANNEL_NAMES}" ]; then
+      echo ""
+      echo "=== Creating Channels (Topics) ==="
+      echo "Type: ${CHANNEL_TYPE} (P=Persistent, R=Reliable, M=Mixed, S=Simple)"
+      echo "TTL: ${CHANNEL_TTL}ms (0=unlimited)"
+      echo "Capacity: ${CHANNEL_CAPACITY} (0=unlimited)"
+      echo ""
+
+      echo "${CHANNEL_NAMES}" | tr ',' '\n' | while read CHANNEL_NAME; do
+        CHANNEL_NAME=$(echo "${CHANNEL_NAME}" | tr -d ' ')
+        if [ -n "${CHANNEL_NAME}" ]; then
+          echo "Creating channel: ${CHANNEL_NAME}"
+          EXISTING=$(runUMTool.sh ListChannels -rname="${LOCAL_URL}" 2>&1 || true)
+          if echo "${EXISTING}" | grep -q "^${CHANNEL_NAME}$"; then
+            echo "  -> Channel ${CHANNEL_NAME} already exists, skipping..."
+          else
+            runUMTool.sh CreateChannel \
+              -rname="${LOCAL_URL}" \
+              -channelname="${CHANNEL_NAME}" \
+              -ttl="${CHANNEL_TTL}" \
+              -type="${CHANNEL_TYPE}" 2>&1 && echo "  -> Channel ${CHANNEL_NAME} created successfully" || echo "  -> Failed to create channel ${CHANNEL_NAME}"
+          fi
+        fi
+      done
+      echo "=== Channels Created ==="
+    fi
+
+    # =====================
+    # CREATE DURABLE SUBSCRIBERS
+    # =====================
+    CREATE_DURABLES="${UM_CREATE_DURABLES:-false}"
+    DURABLE_CONFIGS="${UM_DURABLE_CONFIGS:-}"
+
+    if [ "${CREATE_DURABLES}" = "true" ] && [ -n "${DURABLE_CONFIGS}" ]; then
+      echo ""
+      echo "=== Creating Durable Subscribers ==="
+      echo "Format: channelName:durableName"
+      echo ""
+
+      # Parse durable configs (format: channel1:durable1,channel2:durable2)
+      echo "${DURABLE_CONFIGS}" | tr ',' '\n' | while read DURABLE_CONFIG; do
+        DURABLE_CONFIG=$(echo "${DURABLE_CONFIG}" | tr -d ' ')
+        if [ -n "${DURABLE_CONFIG}" ]; then
+          CHANNEL_NAME=$(echo "${DURABLE_CONFIG}" | cut -d':' -f1)
+          DURABLE_NAME=$(echo "${DURABLE_CONFIG}" | cut -d':' -f2)
+
+          if [ -n "${CHANNEL_NAME}" ] && [ -n "${DURABLE_NAME}" ]; then
+            echo "Creating durable subscriber: ${DURABLE_NAME} on channel ${CHANNEL_NAME}"
+            runUMTool.sh CreateDurable \
+              -rname="${LOCAL_URL}" \
+              -channelname="${CHANNEL_NAME}" \
+              -durablename="${DURABLE_NAME}" \
+              -durabletype="S" 2>&1 && echo "  -> Durable ${DURABLE_NAME} created successfully" || echo "  -> Durable ${DURABLE_NAME} may already exist or failed"
+          fi
+        fi
+      done
+      echo "=== Durable Subscribers Created ==="
+    fi
+
+    # =====================
+    # CREATE JOINS (Channel Links)
+    # =====================
+    CREATE_JOINS="${UM_CREATE_JOINS:-false}"
+    JOIN_CONFIGS="${UM_JOIN_CONFIGS:-}"
+
+    if [ "${CREATE_JOINS}" = "true" ] && [ -n "${JOIN_CONFIGS}" ]; then
+      echo ""
+      echo "=== Creating Channel Joins ==="
+      echo "Format: sourceChannel:targetHost:targetPort:targetChannel"
+      echo ""
+
+      # Parse join configs
+      echo "${JOIN_CONFIGS}" | tr ',' '\n' | while read JOIN_CONFIG; do
+        JOIN_CONFIG=$(echo "${JOIN_CONFIG}" | tr -d ' ')
+        if [ -n "${JOIN_CONFIG}" ]; then
+          SRC_CHANNEL=$(echo "${JOIN_CONFIG}" | cut -d':' -f1)
+          TGT_HOST=$(echo "${JOIN_CONFIG}" | cut -d':' -f2)
+          TGT_PORT=$(echo "${JOIN_CONFIG}" | cut -d':' -f3)
+          TGT_CHANNEL=$(echo "${JOIN_CONFIG}" | cut -d':' -f4)
+          TGT_URL="nsp://${TGT_HOST}:${TGT_PORT}"
+
+          if [ -n "${SRC_CHANNEL}" ] && [ -n "${TGT_HOST}" ]; then
+            echo "Creating join: ${SRC_CHANNEL} -> ${TGT_URL}/${TGT_CHANNEL}"
+            runUMTool.sh CreateJoin \
+              -rname="${LOCAL_URL}" \
+              -channelname="${SRC_CHANNEL}" \
+              -jrname="${TGT_URL}" \
+              -jchannelname="${TGT_CHANNEL:-${SRC_CHANNEL}}" 2>&1 && echo "  -> Join created successfully" || echo "  -> Join may already exist or failed"
+          fi
+        fi
+      done
+      echo "=== Channel Joins Created ==="
+    fi
+
+    # =====================
+    # JNDI REGISTRAR SETUP (Java API — visible in UM Enterprise Manager)
+    # =====================
+    # Uses JndiRegistrar to bind entries under standard JNDI sub-contexts:
+    #   Queues/           → javax.jms.Queue entries
+    #   Topics/           → javax.jms.Topic entries
+    #   Connection Factories/ → javax.jms.ConnectionFactory entries
+    # This matches on-prem EM-created entries and makes them browsable in EM.
+
+    QUEUE_TYPE="${UM_QUEUE_TYPE:-P}"
+    QUEUE_TTL="${UM_QUEUE_TTL:-0}"
+    QUEUE_CAPACITY="${UM_QUEUE_CAPACITY:-0}"
+    CHANNEL_TYPE="${UM_CHANNEL_TYPE:-P}"
+    CHANNEL_TTL="${UM_CHANNEL_TTL:-0}"
+    CHANNEL_CAPACITY="${UM_CHANNEL_CAPACITY:-0}"
+
+    # UM paths for JNDI registration
+    UM_HOME="/opt/softwareag/UniversalMessaging"
+    JNDI_CP="${UM_HOME}/lib/nClient.jar:${UM_HOME}/lib/nJMS.jar:${UM_HOME}/lib/nAdminAPI.jar:${UM_HOME}/lib/gf.javax.jms.jar"
+
+    # =====================
+    # COMPILE JNDI REGISTRAR
+    # =====================
+    JNDI_REGISTRAR="/jndi/JndiRegistrar.java"
+    JNDI_COMPILED="false"
+    if [ -f "${JNDI_REGISTRAR}" ]; then
+      echo "=== Compiling JNDI Registrar ==="
+      cp "${JNDI_REGISTRAR}" /tmp/JndiRegistrar.java
+      javac -encoding UTF-8 -cp "${JNDI_CP}" /tmp/JndiRegistrar.java 2>&1 || true
+      if [ -f "/tmp/JndiRegistrar.class" ]; then
+        echo "JNDI Registrar compiled successfully"
+        JNDI_COMPILED="true"
+      else
+        echo "WARNING: JNDI Registrar compilation failed — JNDI entries will not be registered in EM"
+      fi
+    else
+      echo "NOTE: JNDI Registrar source not found at ${JNDI_REGISTRAR}"
+    fi
+
+    # =====================
+    # CREATE NATIVE QUEUES (for JNDI-registered queues)
+    # =====================
+    CREATE_JNDI_QUEUES="${UM_CREATE_JNDI_QUEUES:-false}"
+    JNDI_QUEUE_NAMES="${UM_JNDI_QUEUE_NAMES:-}"
+
+    if [ "${CREATE_JNDI_QUEUES}" = "true" ] && [ -n "${JNDI_QUEUE_NAMES}" ]; then
+      echo ""
+      echo "=== Creating Native Queues (for JNDI registration) ==="
+      echo "Type: ${QUEUE_TYPE} | TTL: ${QUEUE_TTL}ms | Capacity: ${QUEUE_CAPACITY}"
+
+      echo "${JNDI_QUEUE_NAMES}" | tr ',' '\n' | while read JNDI_QUEUE; do
+        JNDI_QUEUE=$(echo "${JNDI_QUEUE}" | tr -d ' ')
+        if [ -n "${JNDI_QUEUE}" ]; then
+          echo "Creating native queue: ${JNDI_QUEUE}"
+          EXISTING=$(runUMTool.sh ListChannels -rname="${LOCAL_URL}" 2>&1 || true)
+          if echo "${EXISTING}" | grep -q "^${JNDI_QUEUE}$"; then
+            echo "  -> Queue ${JNDI_QUEUE} already exists"
+          else
+            runUMTool.sh CreateQueue \
+              -rname="${LOCAL_URL}" \
+              -queuename="${JNDI_QUEUE}" \
+              -ttl="${QUEUE_TTL}" \
+              -type="${QUEUE_TYPE}" \
+              -maxevents="${QUEUE_CAPACITY}" 2>&1 && echo "  -> Queue ${JNDI_QUEUE} created" || echo "  -> Failed to create queue ${JNDI_QUEUE}"
+          fi
+        fi
+      done
+      echo "=== Native Queues for JNDI Created ==="
+    fi
+
+    # =====================
+    # CREATE NATIVE CHANNELS (for JNDI-registered topics)
+    # =====================
+    CREATE_JNDI_TOPICS="${UM_CREATE_JNDI_TOPICS:-false}"
+    JNDI_TOPIC_NAMES="${UM_JNDI_TOPIC_NAMES:-}"
+
+    if [ "${CREATE_JNDI_TOPICS}" = "true" ] && [ -n "${JNDI_TOPIC_NAMES}" ]; then
+      echo ""
+      echo "=== Creating Native Channels (for JNDI registration) ==="
+      echo "Type: ${CHANNEL_TYPE} | TTL: ${CHANNEL_TTL}ms | Capacity: ${CHANNEL_CAPACITY}"
+
+      echo "${JNDI_TOPIC_NAMES}" | tr ',' '\n' | while read JNDI_TOPIC; do
+        JNDI_TOPIC=$(echo "${JNDI_TOPIC}" | tr -d ' ')
+        if [ -n "${JNDI_TOPIC}" ]; then
+          echo "Creating native channel: ${JNDI_TOPIC}"
+          EXISTING=$(runUMTool.sh ListChannels -rname="${LOCAL_URL}" 2>&1 || true)
+          if echo "${EXISTING}" | grep -qE "^/?${JNDI_TOPIC}$"; then
+            echo "  -> Channel ${JNDI_TOPIC} already exists"
+          else
+            runUMTool.sh CreateChannel \
+              -rname="${LOCAL_URL}" \
+              -channelname="${JNDI_TOPIC}" \
+              -ttl="${CHANNEL_TTL}" \
+              -type="${CHANNEL_TYPE}" 2>&1 && echo "  -> Channel ${JNDI_TOPIC} created" || echo "  -> Failed to create channel ${JNDI_TOPIC}"
+          fi
+        fi
+      done
+      echo "=== Native Channels for JNDI Created ==="
+    fi
+
+    # =====================
+    # REGISTER JNDI ENTRIES (via Java API — visible in UM Enterprise Manager)
+    # =====================
+    CREATE_CF="${UM_CREATE_CONNECTION_FACTORIES:-false}"
+    CF_CONFIGS="${UM_CONNECTION_FACTORY_CONFIGS:-}"
+    CONNECTION_URL="${UM_CONNECTION_URL:-nsp://localhost:${LOCAL_PORT}}"
+
+    if [ "${JNDI_COMPILED}" = "true" ]; then
+      JNDI_CMD="java -cp /tmp:${JNDI_CP} JndiRegistrar ${LOCAL_URL}"
+
+      # Register JNDI Queues
+      if [ "${CREATE_JNDI_QUEUES}" = "true" ] && [ -n "${JNDI_QUEUE_NAMES}" ]; then
+        echo ""
+        echo "=== Registering JNDI Queues (javax.jms.Queue) ==="
+        ${JNDI_CMD} queue "${JNDI_QUEUE_NAMES}" 2>&1 || echo "WARNING: JNDI queue registration had errors"
+        echo "=== JNDI Queues Registered ==="
+      fi
+
+      # Register JNDI Topics
+      if [ "${CREATE_JNDI_TOPICS}" = "true" ] && [ -n "${JNDI_TOPIC_NAMES}" ]; then
+        echo ""
+        echo "=== Registering JNDI Topics (javax.jms.Topic) ==="
+        ${JNDI_CMD} topic "${JNDI_TOPIC_NAMES}" 2>&1 || echo "WARNING: JNDI topic registration had errors"
+        echo "=== JNDI Topics Registered ==="
+      fi
+
+      # Register JNDI Connection Factories
+      if [ "${CREATE_CF}" = "true" ] && [ -n "${CF_CONFIGS}" ]; then
+        echo ""
+        echo "=== Registering JNDI Connection Factories (javax.jms.ConnectionFactory) ==="
+        echo "Connection URL: ${CONNECTION_URL}"
+        CF_NAMES=$(echo "${CF_CONFIGS}" | tr ',' '\n' | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')
+        ${JNDI_CMD} connectionfactory "${CF_NAMES}" "${CONNECTION_URL}" 2>&1 || echo "WARNING: JNDI factory registration had errors"
+        echo "=== JNDI Connection Factories Registered ==="
+      fi
+
+    else
+      echo ""
+      echo "WARNING: JNDI Registrar not available — falling back to CLI tools"
+      echo "  (Entries will be functional but NOT visible in UM Enterprise Manager)"
+
+      # Fallback: use CLI tools for connection factories
+      if [ "${CREATE_CF}" = "true" ] && [ -n "${CF_CONFIGS}" ]; then
+        echo ""
+        echo "=== Creating Connection Factories via CLI (fallback) ==="
+        echo "Connection URL: ${CONNECTION_URL}"
+
+        echo "${CF_CONFIGS}" | tr ',' '\n' | while read CF_CONFIG; do
+          CF_CONFIG=$(echo "${CF_CONFIG}" | tr -d ' ')
+          if [ -n "${CF_CONFIG}" ]; then
+            CF_NAME=$(echo "${CF_CONFIG}" | cut -d':' -f1)
+            CF_TYPE=$(echo "${CF_CONFIG}" | cut -d':' -f2)
+            CF_TYPE=${CF_TYPE:-default}
+
+            if [ -n "${CF_NAME}" ]; then
+              echo "Creating connection factory: ${CF_NAME} (type: ${CF_TYPE})"
+              runUMTool.sh CreateConnectionFactory \
+                -rname="${LOCAL_URL}" \
+                -connectionurl="${CONNECTION_URL}" \
+                -factoryname="${CF_NAME}" \
+                -factorytype="${CF_TYPE}" 2>&1 && echo "  -> Connection factory ${CF_NAME} created" || echo "  -> Connection factory ${CF_NAME} may already exist or failed"
+            fi
+          fi
+        done
+        echo "=== Connection Factories Created (CLI fallback) ==="
+      fi
+    fi
+
+    #############################################
+    # INTER-REALM CONNECTIONS (if configured)
+    #############################################
+    if [ -n "${REMOTE_REALMS}" ]; then
+      echo ""
+      echo "=== Setting Up Inter-Realm Connections ==="
+      echo "Remote Realms: ${REMOTE_REALMS}"
+
+      # Parse remote realms (format: name1:host1:port1,name2:host2:port2)
+      echo "${REMOTE_REALMS}" | tr ',' '\n' | while read REMOTE_REALM; do
+        REMOTE_REALM=$(echo "${REMOTE_REALM}" | tr -d ' ')
+        if [ -n "${REMOTE_REALM}" ]; then
+          REMOTE_NAME=$(echo "${REMOTE_REALM}" | cut -d':' -f1)
+          REMOTE_HOST=$(echo "${REMOTE_REALM}" | cut -d':' -f2)
+          REMOTE_PORT=$(echo "${REMOTE_REALM}" | cut -d':' -f3)
+          REMOTE_URL="nsp://${REMOTE_HOST}:${REMOTE_PORT}"
+
+          echo ""
+          echo "--- Connecting to ${REMOTE_NAME} at ${REMOTE_URL} ---"
+
+          # Wait for remote realm to be available
+          echo "Waiting for remote realm ${REMOTE_NAME}..."
+          REMOTE_RETRIES=60
+          REMOTE_READY=false
+          while [ $REMOTE_RETRIES -gt 0 ]; do
+            if runUMTool.sh GetServerTime -rname="${REMOTE_URL}" 2>/dev/null; then
+              echo "Remote realm ${REMOTE_NAME} is ready!"
+              REMOTE_READY=true
+              break
+            fi
+            echo "Waiting for ${REMOTE_NAME}... (${REMOTE_RETRIES} retries left)"
+            sleep 5
+            REMOTE_RETRIES=$((REMOTE_RETRIES - 1))
+          done
+
+          if [ "${REMOTE_READY}" = "true" ]; then
+            echo "Remote realm ${REMOTE_NAME} is available"
+          else
+            echo "WARNING: Remote realm ${REMOTE_NAME} not available, skipping..."
+          fi
+        fi
+      done
+
+      echo ""
+      echo "=== Inter-Realm Connections Complete ==="
+    fi
+
+    #############################################
+    # FINAL STATE SUMMARY
+    #############################################
+    echo ""
+    echo "=============================================="
+    echo "=== Final State Summary ==="
+    echo "=============================================="
+    echo ""
+    echo "All Channels/Queues on ${LOCAL_REALM}:"
+    runUMTool.sh ListChannels -rname="${LOCAL_URL}" 2>&1 || echo "Unable to list channels"
+
+    echo ""
+    echo "=============================================="
+    echo "UM Initialization completed for ${LOCAL_REALM}!"
+    echo "=============================================="
+{{- end }}

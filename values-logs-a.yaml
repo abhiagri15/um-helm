@@ -1,0 +1,181 @@
+# UM Logs Cluster A - Active-Active Configuration
+# Use case: High throughput log ingestion
+# Combined URL: nsp://um-logs-combined:9000
+
+# ============================================================================
+# License Configuration (files/license/licence.xml)
+# ============================================================================
+# Set enabled: true ONLY after placing your real UM licence.xml.
+# Steps: 1) Replace files/license/licence.xml  2) Set enabled: true  3) Redeploy
+# ============================================================================
+license:
+  enabled: false
+
+# Cluster label for multi-cluster monitoring within same namespace
+# Used by Prometheus ServiceMonitors and Grafana dashboards to differentiate clusters
+clusterLabel: "logs-a"
+
+# Single node per cluster for Active-Active (each is a Master)
+replicaCount: 1
+
+# Release name prefix
+nameOverride: "um-logs-a"
+fullnameOverride: "um-logs-a"
+
+# UM image configuration
+image:
+  registry: abiwebmethods.azurecr.io
+  repository: webmethods/universalmessaging-server
+  tag: "11.1.2"
+  pullPolicy: IfNotPresent
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    nsp: 9000
+    jmx: 9200
+
+# Resource allocation - higher for log processing
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+# Persistent storage
+persistence:
+  enabled: true
+  storageClass: "default"
+  accessMode: ReadWriteOnce
+  size: 20Gi  # Larger for log data
+
+# Universal Messaging configuration
+um:
+  realmName: "um-logs-a"
+  clusterName: "logs-cluster-a"
+  clustering:
+    enabled: false  # No internal clustering - standalone Master
+    mode: "standalone"
+  interRealm:
+    enabled: true
+    clusterType: "active-active"
+    clusterId: "logs-a"
+    # Combined service for publisher connection (only enable on one cluster)
+    combinedService:
+      enabled: true
+      name: "um-logs-combined"
+      type: "ClusterIP"
+      dataType: "logs"  # Selector to match only logs clusters
+    remoteRealms:
+      - name: "um-logs-b"
+        host: "um-logs-b-0.um-logs-b-headless"
+        port: 9000
+      - name: "um-logs-c"
+        host: "um-logs-c-0.um-logs-c-headless"
+        port: 9000
+  # =====================
+  # QUEUE CONFIGURATION
+  # =====================
+  queues:
+    enabled: true
+    names: "LogQueue-Application,LogQueue-System,LogQueue-Audit"
+    type: "P"        # P=Persistent, R=Reliable, M=Mixed, S=Simple
+    ttl: 0           # 0=unlimited (use 0 to avoid scientific notation issues)
+    capacity: 0      # 0=unlimited
+
+  # =====================
+  # CHANNEL (TOPIC) CONFIGURATION
+  # =====================
+  channels:
+    enabled: true
+    names: "LogChannel-Stream"
+    type: "M"        # Mixed - faster for high throughput
+    ttl: 0           # 0=unlimited
+    capacity: 0      # 0=unlimited
+
+  # =====================
+  # DURABLE SUBSCRIBER CONFIGURATION
+  # =====================
+  # Format: "channelName:durableName" (comma-separated for multiple)
+  durables:
+    enabled: true
+    configs: "LogChannel-Stream:LogProcessor,LogChannel-Stream:LogArchiver"
+
+  # =====================
+  # JNDI CONNECTION FACTORY CONFIGURATION
+  # =====================
+  # Format: "factoryName:factoryType" (comma-separated for multiple)
+  # Types: default (ConnectionFactory), queue (QueueConnectionFactory),
+  #        topic (TopicConnectionFactory), xa (XAConnectionFactory)
+  connectionFactories:
+    enabled: true
+    configs: "SmPubConnectionFactory:default,smLoggingDurableConnectionFactory:default"
+
+  # =====================
+  # JNDI QUEUE REGISTRATION
+  # =====================
+  jndiQueues:
+    enabled: true
+    names: "LogQueue-Application,LogQueue-System,LogQueue-Audit"
+
+  # =====================
+  # JNDI TOPIC REGISTRATION
+  # =====================
+  jndiTopics:
+    enabled: true
+    names: "LogChannel-Stream"
+
+# Pod Disruption Budget - disabled for single node
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Health Probes
+healthProbes:
+  startup:
+    enabled: true
+    initialDelaySeconds: 120
+    periodSeconds: 15
+    timeoutSeconds: 30
+    failureThreshold: 20
+  liveness:
+    enabled: true
+    initialDelaySeconds: 180
+    periodSeconds: 30
+    timeoutSeconds: 30
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    initialDelaySeconds: 120
+    periodSeconds: 15
+    timeoutSeconds: 30
+    failureThreshold: 3
+
+# Pod annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9200"
+
+# Pod labels - must include these for combined service selector
+podLabels:
+  component: messaging
+  tier: middleware
+  data-type: "logs"
+
+# Environment variables
+env:
+  - name: REALM_NAME
+    value: "um-logs-a"
+  - name: INIT_JAVA_MEM_SIZE
+    value: "512"
+  - name: MAX_JAVA_MEM_SIZE
+    value: "1536"
+  - name: MAX_DIRECT_MEM_SIZE
+    value: "1G"
+  - name: BASIC_AUTH_ENABLE
+    value: "Y"
+  - name: LOG_FRAMEWORK
+    value: "log4j2"

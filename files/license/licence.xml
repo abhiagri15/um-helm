@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ============================================================================
+     Universal Messaging Server License - Placeholder
+     ============================================================================
+     Replace this placeholder with your actual UM licence.xml from IBM/SoftwareAG.
+
+     How to obtain:
+     1. Log in to Empower (https://empower.softwareag.com) or IBM Passport Advantage
+     2. Download your Universal Messaging license key
+     3. Replace the contents of this file with the downloaded licence.xml
+
+     File location in container:
+       /opt/softwareag/UniversalMessaging/server/default/bin/licence.xml
+
+     NOTE: All UM clusters (business, logs-a, logs-b, logs-c) share the same
+     license file. If you need different licenses per cluster, create separate
+     files and use values override.
+     ============================================================================ -->
+<SoftwareAG_License>
+  <!-- PLACEHOLDER: Replace with actual UM licence XML content -->
+</SoftwareAG_License>

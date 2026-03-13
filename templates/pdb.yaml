@@ -2,14 +2,14 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: wm-um-pdb
-  namespace: {{ .Values.global.namespace }}
+  name: {{ include "um.fullname" . }}-pdb
+  namespace: {{ .Release.Namespace }}
   labels:
-    app: wm-um
+    app: {{ include "um.fullname" . }}
     component: messaging
 spec:
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
-      app: wm-um
+      app: {{ include "um.fullname" . }}
 {{- end }}

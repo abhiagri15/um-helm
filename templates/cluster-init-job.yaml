@@ -1,0 +1,128 @@
+{{- if .Values.um.clustering.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "um.fullname" . }}-cluster-init-{{ .Release.Revision }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "um.fullname" . }}
+    component: cluster-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 5
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: {{ include "um.fullname" . }}
+        component: cluster-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: cluster-init
+        image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["/bin/sh", "/scripts/init-cluster.sh"]
+        env:
+        - name: UM_CLUSTER_NAME
+          value: {{ .Values.um.clusterName | default "umCluster" | quote }}
+        - name: UM_REPLICA_COUNT
+          value: {{ .Values.replicaCount | quote }}
+        - name: UM_HEADLESS_SERVICE
+          value: "{{ include "um.fullname" . }}-headless"
+        - name: UM_NAMESPACE
+          value: {{ .Release.Namespace | quote }}
+        - name: UM_PORT
+          value: {{ .Values.service.ports.nsp | quote }}
+        - name: UM_CLUSTER_MODE
+          value: {{ .Values.um.clustering.mode | default "active-passive" | quote }}
+        - name: UM_FULLNAME
+          value: {{ include "um.fullname" . | quote }}
+
+        # =====================
+        # QUEUE CONFIGURATION
+        # =====================
+        - name: UM_CREATE_QUEUES
+          value: {{ .Values.um.queues.enabled | default false | quote }}
+        - name: UM_QUEUE_NAMES
+          value: {{ .Values.um.queues.names | default "" | quote }}
+        - name: UM_QUEUE_TYPE
+          value: {{ .Values.um.queues.type | default "P" | quote }}
+        - name: UM_QUEUE_TTL
+          value: {{ .Values.um.queues.ttl | default 0 | quote }}
+        - name: UM_QUEUE_CAPACITY
+          value: {{ .Values.um.queues.capacity | default 0 | quote }}
+
+        # =====================
+        # CHANNEL (TOPIC) CONFIGURATION
+        # =====================
+        - name: UM_CREATE_CHANNELS
+          value: {{ .Values.um.channels.enabled | default false | quote }}
+        - name: UM_CHANNEL_NAMES
+          value: {{ .Values.um.channels.names | default "" | quote }}
+        - name: UM_CHANNEL_TYPE
+          value: {{ .Values.um.channels.type | default "P" | quote }}
+        - name: UM_CHANNEL_TTL
+          value: {{ .Values.um.channels.ttl | default 0 | quote }}
+        - name: UM_CHANNEL_CAPACITY
+          value: {{ .Values.um.channels.capacity | default 0 | quote }}
+
+        # =====================
+        # DURABLE SUBSCRIBER CONFIGURATION
+        # =====================
+        {{- if .Values.um.durables }}
+        - name: UM_CREATE_DURABLES
+          value: {{ .Values.um.durables.enabled | default false | quote }}
+        - name: UM_DURABLE_CONFIGS
+          value: {{ .Values.um.durables.configs | default "" | quote }}
+        {{- end }}
+
+        # =====================
+        # CONNECTION FACTORY CONFIGURATION
+        # =====================
+        {{- if .Values.um.connectionFactories }}
+        - name: UM_CREATE_CONNECTION_FACTORIES
+          value: {{ .Values.um.connectionFactories.enabled | default false | quote }}
+        - name: UM_CONNECTION_FACTORY_CONFIGS
+          value: {{ .Values.um.connectionFactories.configs | default "" | quote }}
+        - name: UM_CONNECTION_URL
+          value: "nsp://{{ include "um.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.ports.nsp }}"
+        {{- end }}
+        # =====================
+        # JNDI QUEUE REGISTRATION
+        # =====================
+        {{- if .Values.um.jndiQueues }}
+        - name: UM_CREATE_JNDI_QUEUES
+          value: {{ .Values.um.jndiQueues.enabled | default false | quote }}
+        - name: UM_JNDI_QUEUE_NAMES
+          value: {{ .Values.um.jndiQueues.names | default "" | quote }}
+        {{- end }}
+        # =====================
+        # JNDI TOPIC REGISTRATION
+        # =====================
+        {{- if .Values.um.jndiTopics }}
+        - name: UM_CREATE_JNDI_TOPICS
+          value: {{ .Values.um.jndiTopics.enabled | default false | quote }}
+        - name: UM_JNDI_TOPIC_NAMES
+          value: {{ .Values.um.jndiTopics.names | default "" | quote }}
+        {{- end }}
+
+        volumeMounts:
+        - name: init-script
+          mountPath: /scripts
+        - name: jndi-registrar
+          mountPath: /jndi
+      volumes:
+      - name: init-script
+        configMap:
+          name: {{ include "um.fullname" . }}-cluster-init
+          defaultMode: 0755
+      - name: jndi-registrar
+        configMap:
+          name: {{ include "um.fullname" . }}-jndi-registrar
+          defaultMode: 0644
+{{- end }}

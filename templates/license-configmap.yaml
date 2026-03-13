@@ -1,0 +1,18 @@
+{{- if .Values.license.enabled }}
+# ============================================================================
+# Universal Messaging License ConfigMap
+# ============================================================================
+# Mounts licence.xml from files/license/ into the UM container at
+# /opt/softwareag/UniversalMessaging/server/default/bin/licence.xml
+# ============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "um.fullname" . }}-license
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "um.labels" . | nindent 4 }}
+data:
+  licence.xml: |
+{{ .Files.Get "files/license/licence.xml" | indent 4 }}
+{{- end }}
